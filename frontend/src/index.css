@@ -1,0 +1,54 @@
+/* Tailwind v4 的引入方式：一行 import，不再需要配置文件 */
+@import "tailwindcss";
+
+/* 全局基础样式 */
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
+/* 打字中指示器：三个圆点依次弹跳（等待回答时显示）
+   一组关键帧定义动画，.typing-dot:nth-child 用 animation-delay 错开节奏 */
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+.typing-dot {
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* 工作中状态的微光文字：一道亮光周期性扫过文字（渐变背景裁剪成文字） */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.shimmer-text {
+  background: linear-gradient(90deg, #9ca3af 25%, #374151 50%, #9ca3af 75%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.5s infinite linear;
+}

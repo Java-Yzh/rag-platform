@@ -1,0 +1,22 @@
+[project]
+name = "rag-platform-backend"
+version = "0.1.0"
+description = "个人自用的通用 RAG 平台后端：Docling 转换 + 结构感知切分 + 混合检索 + 流式问答"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",     # FastAPI 处理文件上传(form-data)必须
+    "pydantic-settings>=2.4",      # 从 .env 文件读配置的标准做法
+    "sqlmodel>=0.0.22",            # SQLAlchemy + Pydantic 的合体,写 ORM 模型最省事
+    "docling>=2.14",               # 文档转换: PDF/DOCX/PPTX -> 结构化文档
+    "langchain>=0.3",
+    "langchain-community>=0.3",    # 智谱模型、BM25 检索器等社区集成
+    "chromadb>=0.5",               # 嵌入式向量数据库(无需单独安装服务)
+    "rank-bm25>=0.2.2",            # BM25 关键词检索算法
+    "jieba>=0.42",                 # 中文分词(BM25 对中文文本必须先分词)
+    "zhipuai>=2.1",                # 智谱官方 SDK,ChatZhipuAI/Embedding 依赖它
+    "langchain-chroma>=1.1.0",
+    "langchain-classic>=1.0.8",
+    "langchain-openai>=1.7.4",
+]
