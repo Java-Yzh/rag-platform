@@ -69,6 +69,34 @@ class ChatSession(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class Provider(SQLModel, table=True):
+    """一个 LLM 供应商配置（设置页"供应商管理"维护）。
+
+    所有主流厂商都提供 OpenAI 兼容端点，所以只要存 base_url + api_key，
+    就能用同一套客户端（ChatOpenAI/OpenAIEmbeddings）访问任何一家。
+    api_key 明文存库：个人自用平台，保密级别与 .env 相同。
+    models 存勾选保存的模型 JSON：[{"id": "...", "kind": "chat"|"embed"}, ...]
+    """
+
+    id: str = Field(primary_key=True)
+    user: str = Field(default="local", index=True)  # 预留：多用户隔离
+    name: str = Field(index=True)                   # 显示名，如 "智谱 BigModel"
+    base_url: str = ""                              # OpenAI 兼容端点（结尾带不带 / 都可以）
+    api_key: str = ""
+    models: str = "[]"                              # JSON：勾选的模型列表
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class AppConfig(SQLModel, table=True):
+    """平台级键值配置。当前只有一个键 model_assignments：
+    {"chat": {provider_id, model}|null, "embed": ..., "optimize": ...}
+    用键值表而不是三个字段的原因：以后加新配置项不用改表结构。
+    """
+
+    key: str = Field(primary_key=True)
+    value: str = ""
+
+
 class ChatMessage(SQLModel, table=True):
     """对话里的一条消息（用户提问或助手回答）。
 

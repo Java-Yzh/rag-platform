@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
-from app.config import settings
 from app.db import get_session
 from app.models import Chunk, Document
 from app.storage import bm25, chroma
@@ -73,10 +72,10 @@ def optimize_chunk(req: OptimizeRequest) -> dict:
     heading_hint = f"（该块所属章节：{req.heading_path}，优化时保持语境一致）" if req.heading_path else ""
     prompt = OPTIMIZE_PROMPT.format(heading_hint=heading_hint, content=req.content)
 
-    from app.services.retrieval import make_chat_llm
+    from app.services.providers import make_chat_llm
 
-    # 低温度 + 独立可配的模型（.env 里 OPTIMIZE_MODEL，可与对话模型不同）
-    result = make_chat_llm(temperature=0.2, model=settings.optimize_model).invoke(prompt).content
+    # 低温度 + 独立分配的模型（设置页可配"AI 优化"专用模型）
+    result = make_chat_llm(role="optimize", temperature=0.2).invoke(prompt).content
     return {"content": _strip_code_fences(result)}
 
 

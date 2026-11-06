@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.db import engine
 from app.models import ChatMessage, Document
-from app.services import retrieval
+from app.services import providers, retrieval
 
 # ---------- 提示词 ----------
 
@@ -177,9 +177,11 @@ def stream_answer(session_id: str, question: str) -> Generator[dict, None, None]
         )
 
         # ⑥ 流式生成。stream() 每次吐出一小段文本（chunk.content）
+        # 模型客户端按当前设置页配置现场构造（换模型保存后立即生效）
         t0 = time.perf_counter()
         answer_parts: list[str] = []
-        for chunk in retrieval.chat_llm.stream(prompt_value.to_messages()):
+        llm = providers.make_chat_llm(role="chat", temperature=0.1)
+        for chunk in llm.stream(prompt_value.to_messages()):
             if chunk.content:
                 answer_parts.append(chunk.content)
                 yield {"type": "token", "content": chunk.content}

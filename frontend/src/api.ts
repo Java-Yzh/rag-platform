@@ -153,6 +153,89 @@ export const api = {
     fetch(`/api/chat/sessions/${id}/messages`).then((r) => json<ChatMessageInfo[]>(r)),
 };
 
+// ---------- 设置：供应商与模型配置 ----------
+
+export interface ProviderTemplate {
+  id: string;
+  name: string;
+  base_url: string;
+  key_url: string;
+  note: string;
+  models_api: boolean;
+}
+
+export interface ModelEntry {
+  id: string; // 模型名，如 glm-4-flash
+  kind: "chat" | "embed";
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key_masked: string;
+  has_key: boolean;
+  models: ModelEntry[];
+  created_at: string;
+}
+
+export type RoleAssign = { provider_id: string; model: string } | null;
+
+export interface ModelSettings {
+  chat: RoleAssign;
+  embed: RoleAssign;
+  optimize: RoleAssign;
+}
+
+/** 设置页专用：供应商与模型配置的 API（独立成对象，和业务 api 分开） */
+export const settingsApi = {
+    listTemplates: () => fetch("/api/providers/templates").then((r) => json<ProviderTemplate[]>(r)),
+    listProviders: () => fetch("/api/providers").then((r) => json<ProviderInfo[]>(r)),
+    createProvider: (body: { name: string; base_url: string; api_key: string; models: ModelEntry[] }) =>
+      fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<ProviderInfo>(r)),
+    updateProvider: (
+      id: string,
+      body: { name?: string; base_url?: string; api_key?: string; models?: ModelEntry[] }
+    ) =>
+      fetch(`/api/providers/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<ProviderInfo>(r)),
+    deleteProvider: (id: string) =>
+      fetch(`/api/providers/${id}`, { method: "DELETE" }).then((r) =>
+        json<{ ok: boolean; cleared_roles: string[] }>(r)
+      ),
+    fetchModels: (baseUrl: string, apiKey: string) =>
+      fetch("/api/providers/fetch-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+      }).then((r) => json<ModelEntry[]>(r)),
+    testProvider: (id: string) =>
+      fetch(`/api/providers/${id}/test`, { method: "POST" }).then((r) =>
+        json<{
+          chat: { ok: boolean; model?: string; error?: string | null };
+          embed: { ok: boolean; model?: string; error?: string | null } | null;
+        }>(r)
+      ),
+    getModelSettings: () => fetch("/api/settings/models").then((r) => json<ModelSettings>(r)),
+    putModelSettings: (body: ModelSettings) =>
+      fetch("/api/settings/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<{ ok: boolean; vector_wiped: boolean; message: string | null }>(r)),
+    reingestAll: () =>
+      fetch("/api/documents/reingest-all", { method: "POST" }).then((r) =>
+        json<{ ok: boolean; submitted: number; skipped: number }>(r)
+      ),
+};
+
 // ---------- SSE 流式问答 ----------
 
 /** 提问并流式处理事件。onEvent 收到 {type:"sources"|"token"|"done"|"error"} */

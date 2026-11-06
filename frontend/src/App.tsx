@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import ChatPage from "./pages/ChatPage";
 import ChunkPage from "./pages/ChunkPage";
 import DocumentsPage from "./pages/DocumentsPage";
+import SettingsPage from "./pages/SettingsPage";
 
 /**
  * 应用骨架：左侧固定导航栏 + 右侧内容区（两个页面切换）。
@@ -36,12 +37,28 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
+        {/* 设置放侧栏底部，和业务导航分开 */}
+        <nav className="mt-auto border-t border-gray-100 p-3">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `block rounded-lg px-3 py-2 text-sm ${
+                isActive
+                  ? "bg-blue-50 font-medium text-blue-700"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`
+            }
+          >
+            ⚙️ 设置
+          </NavLink>
+        </nav>
       </aside>
       <main className="min-w-0 flex-1">
         <Routes>
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/docs" element={<DocumentsPage />} />
           <Route path="/chunks" element={<ChunkPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<ChatPage />} />
         </Routes>
       </main>

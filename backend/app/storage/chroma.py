@@ -8,45 +8,53 @@ RAG 知识点——为什么需要向量库：
 - 用户提问时把问题也变成向量，在库里找"距离最近"的 chunk，就完成了语义检索。
 - Chroma 是"嵌入式"数据库：不需要单独安装服务，数据落在本地目录 data/chroma/ 里。
 
-模型接入说明：用 langchain-openai（一级维护包）指向智谱的 OpenAI 兼容端点。
-这是智谱官方文档推荐的方式；langchain-community 里旧的 ZhipuAI 专用类
-已随该包进入停止维护状态，不建议新项目使用。
+多供应商改造后的两个要点：
+1. embedding 客户端不再是模块级单例——向量模型可在设置页随时更换，
+   每次操作都通过 providers.make_embeddings() 现场取当前配置；
+2. 换向量模型必须 reset_collection()：不同模型的向量维度和语义空间都不同，
+   旧向量留着只会错乱（Chroma 遇到维度不符会直接报错）。
 """
 
+import chromadb
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
 
 from app.config import settings
+from app.services import providers
 
-# 全局单例：Embedding 客户端（负责 文本->向量 的转换）
-_embeddings = OpenAIEmbeddings(
-    model=settings.embed_model,
-    api_key=settings.zhipuai_api_key,
-    base_url=settings.zhipu_base_url,
-)
+COLLECTION = "docs"
 
-# 全局单例：Chroma 向量库（persist_directory 参数让数据落盘，重启不丢）
-# hnsw:space=cosine 表示用余弦相似度度量距离（语义检索的常规选择）
-_vectorstore = Chroma(
-    collection_name="docs",
-    embedding_function=_embeddings,
-    persist_directory=str(settings.chroma_dir),
-    collection_metadata={"hnsw:space": "cosine"},
-)
-
-# 统一的检索器接口：向量检索 top-k。
-# as_retriever() 把向量库包装成 LangChain 的"检索器"对象，
-# 这样后面就能和 BM25 检索器用同一套接口混合使用
-retriever = _vectorstore.as_retriever(search_kwargs={"k": settings.top_k})
+# chromadb 原生客户端（全局单例：文件句柄和缓存较重，值得复用）
+# 注：PersistentClient 是工厂函数不是类，类型标注要用字符串形式（否则运行时报错）
+_client: "chromadb.PersistentClient | None" = None
 
 
-def search_with_scores(query: str, k: int) -> list[tuple]:
-    """带相关性分数的向量检索：返回 [(Document, 分数)]。
+def _get_client() -> "chromadb.PersistentClient":
+    global _client
+    if _client is None:
+        _client = chromadb.PersistentClient(path=str(settings.chroma_dir))
+    return _client
 
-    分数就是余弦相似度（0~1，越大越相关）——混合检索用它做
-    "及格线"过滤：无关问题能拿到分数分布，低于阈值的块直接丢弃。
+
+def get_vectorstore() -> Chroma:
+    """构造向量库包装。构造很轻（毫秒级），每次现造，embedding 配置变更即刻生效。"""
+    return Chroma(
+        collection_name=COLLECTION,
+        embedding_function=providers.make_embeddings(),
+        persist_directory=str(settings.chroma_dir),
+        collection_metadata={"hnsw:space": "cosine"},  # 余弦相似度
+    )
+
+
+def reset_collection() -> None:
+    """删除整个 collection（下次使用时自动重建，维度归零）。
+
+    换向量模型时调用——见文件头注释第 2 点。删掉的向量需要通过
+    "全部重新入库"重建。
     """
-    return _vectorstore.similarity_search_with_relevance_scores(query, k=k)
+    try:
+        _get_client().delete_collection(COLLECTION)
+    except Exception:  # noqa: BLE001 —— collection 不存在时 delete 会抛错，忽略
+        pass
 
 
 def add_chunks(doc_id: str, chunks: list[dict]) -> None:
@@ -69,18 +77,18 @@ def add_chunks(doc_id: str, chunks: list[dict]) -> None:
     ]
     # 每条向量一个确定性 id（doc_id + 序号），重复入库时旧数据会被覆盖而不是翻倍
     ids = [f"{doc_id}:{c['seq']}" for c in chunks]
-    _vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+    get_vectorstore().add_texts(texts=texts, metadatas=metadatas, ids=ids)
 
 
 def delete_doc(doc_id: str) -> None:
     """删除某份文档在向量库里的全部向量。
 
     用公开 API 两步走：先按 metadata 过滤查出 id 列表，再按 id 删除。
-    （绕开对私有属性 _collection 的依赖，升级 langchain-chroma 不容易踩坏）
+    （绕开对私有属性的依赖，升级 langchain-chroma 不容易踩坏）
     """
-    hits = _vectorstore.get(where={"doc_id": doc_id}, include=[])
+    hits = get_vectorstore().get(where={"doc_id": doc_id}, include=[])
     if hits["ids"]:
-        _vectorstore.delete(ids=hits["ids"])
+        get_vectorstore().delete(ids=hits["ids"])
 
 
 def replace_chunk_vector(doc_id: str, chunk: dict) -> None:
@@ -90,15 +98,29 @@ def replace_chunk_vector(doc_id: str, chunk: dict) -> None:
     语义，必须换掉，否则检索会"文不对向量"。id 仍是确定性的
     doc_id:seq，所以先删后加正好完成原位替换。
     """
-    _vectorstore.delete(ids=[f"{doc_id}:{chunk['seq']}"])
-    add_chunks(doc_id, [chunk])
+    vs = get_vectorstore()
+    vs.delete(ids=[f"{doc_id}:{chunk['seq']}"])
+    ids = [f"{doc_id}:{chunk['seq']}"]
+    vs.add_texts(
+        texts=[chunk["content"]],
+        metadatas=[{
+            "doc_id": doc_id,
+            "seq": chunk["seq"],
+            "heading_path": chunk["heading_path"],
+            "page_no": chunk["page_no"] if chunk["page_no"] is not None else -1,
+        }],
+        ids=ids,
+    )
+
+
+def search_with_scores(query: str, k: int) -> list[tuple]:
+    """带相关性分数的向量检索：返回 [(Document, 分数)]。
+
+    分数就是余弦相似度（0~1，越大越相关）。
+    """
+    return get_vectorstore().similarity_search_with_relevance_scores(query, k=k)
 
 
 def count() -> int:
-    """当前向量总数（诊断/验证用，比如删除后确认归零）。"""
-    return _vectorstore._collection.count()
-
-
-def embed_query(text: str) -> list[float]:
-    """把一句文本变成向量（给 BM25 之外的地方备用，如调试脚本）。"""
-    return _embeddings.embed_query(text)
+    """当前向量总数（诊断/验证用）。不依赖 embedding 配置，任何时候可用。"""
+    return _get_client().get_or_create_collection(COLLECTION).count()

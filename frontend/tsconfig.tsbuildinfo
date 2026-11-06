@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/pages/chatpage.tsx","./src/pages/chunkpage.tsx","./src/pages/documentspage.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/pages/chatpage.tsx","./src/pages/chunkpage.tsx","./src/pages/documentspage.tsx","./src/pages/settingspage.tsx"],"version":"5.9.3"}

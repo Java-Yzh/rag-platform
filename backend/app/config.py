@@ -11,7 +11,6 @@
 
 from pathlib import Path
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/ 目录（本文件在 backend/app/config.py，往上两级就是 backend/）
@@ -19,19 +18,11 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    """所有配置项。同名环境变量（.env 文件里）会自动覆盖这里的默认值。"""
+    """所有配置项。同名环境变量（.env 文件里）会自动覆盖这里的默认值。
 
-    # --- 模型相关（智谱全家桶，一个 key 搞定对话 + 向量） ---
-    zhipuai_api_key: str = ""                 # 智谱 API Key，必填，放在 .env 里
-    # 智谱的 OpenAI 兼容端点：官方推荐的接入方式是 langchain-openai
-    # 指向这个地址（而不是 langchain-community 里已停止维护的智谱类）
-    zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
-    chat_model: str = "glm-4-flash"           # 对话模型，flash 档免费且够用
-    # chunk AI 优化用的模型：独立配置，可以和对话模型不同（仍走智谱端点，
-    # 改写质量要求高时可以换成 glm-4-plus 等更强档位）
-    optimize_model: str = "glm-4-flash"
-    embed_model: str = "embedding-3"          # 向量（Embedding）模型
-    embed_dim: int = 2048                     # embedding-3 输出的向量维度
+    模型相关配置（供应商/key/模型选择）不在这里——它们在设置页管理，
+    存 SQLite（见 services/providers.py）。.env 只保留"不需要频繁改"的参数。
+    """
 
     # --- 检索相关 ---
     top_k: int = 6                            # 向量检索和 BM25 各自取前几条
@@ -64,26 +55,6 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
-    @model_validator(mode="after")
-    def _check_api_key(self) -> "Settings":
-        """启动时就把"没配 Key"拦下来，给一句能看懂的人话。
-
-        否则这个错误会延迟到 langchain 初始化模型时才爆出来，
-        堆栈又深又难定位——那正是很多人第一次运行被劝退的地方。
-        """
-        if not self.zhipuai_api_key:
-            raise ValueError(
-                "\n============================================\n"
-                "  缺少智谱 API Key，服务无法启动。\n"
-                "  两步解决：\n"
-                "  1. cp backend/.env.example backend/.env\n"
-                "  2. 编辑 backend/.env，在 ZHIPUAI_API_KEY= 后面填入你的 Key\n"
-                "     （智谱开放平台 https://open.bigmodel.cn/ 申请）\n"
-                "  然后重新启动。\n"
-                "============================================"
-            )
-        return self
 
 
 # 全局单例：其他模块直接 `from app.config import settings` 使用。

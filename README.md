@@ -5,14 +5,14 @@
 ## 快速开始
 
 ```bash
-# 1. 配置 API Key（智谱开放平台 https://open.bigmodel.cn/ 申请，glm-4-flash 免费）
-cp backend/.env backend/.env
-#    编辑 backend/.env，填入 ZHIPUAI_API_KEY=...
-
-# 2. 一键启动（首次会自动安装依赖；PDF 首次转换需从镜像下载模型，耐心等待）
+# 1. 一键启动（首次会自动安装依赖；PDF 首次转换需从镜像下载模型，耐心等待）
 ./start.sh
 
-# 3. 浏览器打开 http://localhost:8000
+# 2. 浏览器打开 http://localhost:8000，进「⚙️ 设置」页完成配置：
+#    供应商管理 → 点厂商模板（智谱/DeepSeek/月之暗面/百炼/硅基流动/MiniMax 或自定义）
+#               → 填 API Key → 获取可用模型 → 勾选 → 保存
+#    模型配置   → 给 对话/向量/AI优化 三个角色各选"供应商 + 模型" → 保存
+#    （智谱 glm-4-flash 免费 + embedding-3，一套即可跑通全流程）
 ```
 
 开发模式（改代码热重载）：`./dev.sh`，前端访问 http://localhost:5173

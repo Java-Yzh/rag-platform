@@ -28,12 +28,11 @@ import time
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document as LCDocument
-from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.retrievers import BaseRetriever
-from langchain_openai import ChatOpenAI
 
 from app.config import settings
+from app.services import providers
 
 # 问题改写提示词：要求输出一个"不依赖上下文也能看懂"的问题
 CONDENSE_PROMPT = ChatPromptTemplate.from_messages(
@@ -50,25 +49,6 @@ CONDENSE_PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-def make_chat_llm(temperature: float, model: str | None = None) -> ChatOpenAI:
-    """创建一个指向智谱的对话模型客户端（工厂函数，各场景按需取用）。
-
-    问答用 temperature=0.1（要稳），改写/把关/文本优化等确定性任务用 0~0.2。
-    model 不传时用默认对话模型；AI 优化等场景可传独立配置的模型。
-    """
-    return ChatOpenAI(
-        model=model or settings.chat_model,
-        api_key=settings.zhipuai_api_key,
-        base_url=settings.zhipu_base_url,
-        temperature=temperature,
-        # streaming 用默认配置：.stream() 调用时自动逐 token 返回
-    )
-
-
-# 对话模型全局单例（流式生成回答用它）
-chat_llm: BaseChatModel = make_chat_llm(temperature=0.1)
-
-
 def rewrite_query(question: str, history: list) -> str:
     """历史感知改写（手写版，替代 langchain 的 create_history_aware_retriever）。
 
@@ -78,7 +58,8 @@ def rewrite_query(question: str, history: list) -> str:
     if not history:
         return question
     # temperature=0：改写是确定性任务，不需要创造性
-    llm = make_chat_llm(temperature=0)
+    # 模型来自设置页的"对话模型"分配（providers 服务查库构造）
+    llm = providers.make_chat_llm(role="chat", temperature=0)
     messages = CONDENSE_PROMPT.invoke({"question": question, "chat_history": history})
     return llm.invoke(messages).content.strip()
 
@@ -126,7 +107,7 @@ def _grade_relevance(query: str, docs: list[LCDocument]) -> tuple[bool, str]:
         f"用户问题：{query}\n\n候选参考材料：\n{excerpts}\n\n"
         '这些材料能否为回答该问题提供有用信息？只回答"是"或"否"。'
     )
-    raw = make_chat_llm(temperature=0).invoke(prompt).content.strip()
+    raw = providers.make_chat_llm(role="chat", temperature=0).invoke(prompt).content.strip()
     return raw.startswith("是"), raw
 
 
