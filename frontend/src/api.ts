@@ -43,10 +43,35 @@ export interface Source {
   snippet: string;
 }
 
+/** 链路跟踪：一次回答的完整流水线记录（后端 trace 的形状） */
+export interface TraceHit {
+  doc_id: string;
+  seq: number | null;
+  heading: string;
+  score: number;
+  excerpt: string;
+}
+
+export interface TraceInfo {
+  question: string;
+  rewritten_question: string;
+  retrieval: {
+    query_used?: string;
+    vector: TraceHit[];
+    bm25: TraceHit[];
+    fused: string[];
+    gate: { enabled: boolean; relevant: boolean | null; raw?: string };
+    timings_ms: Record<string, number>;
+  };
+  final_prompt?: string | null;
+  timings_ms?: Record<string, number | Record<string, number>>;
+}
+
 export interface ChatMessageInfo {
   role: "user" | "assistant";
   content: string;
   sources: Source[];
+  trace?: TraceInfo | null;
 }
 
 // ---------- 普通请求 ----------

@@ -81,4 +81,6 @@ class ChatMessage(SQLModel, table=True):
     role: str                                    # "user" 或 "assistant"
     content: str = ""
     sources: str | None = None                   # JSON：[{"doc", "heading", "page", "snippet"}]
+    # JSON：本次回答的完整链路（改写问题/检索分数/把关/提示词/耗时），调优用的"黑匣子"
+    trace: str | None = None
     created_at: datetime = Field(default_factory=utcnow)

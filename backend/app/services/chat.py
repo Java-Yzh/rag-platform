@@ -1,18 +1,24 @@
 """
-问答服务：把"检索到的 chunks + 用户问题"组装成提示词，流式生成带引用的回答。
+问答服务：把"检索到的 chunks + 用户问题"组装成提示词，流式生成带引用的回答，
+并把这次回答的完整链路（trace）记录下来。
 
 数据流位置：RAG 的最后一棒——
-    问题 + 历史 ──> retrieval.py(检索) ──> 本文件(组装提示词) ──> GLM 流式回答
+    问题 + 历史 ──> retrieval.py(改写+检索+把关) ──> 本文件(组装提示词) ──> GLM 流式回答
+                                    └──── 每一步都写进 trace，随消息存库 ────┘
 
-回答要求模型用 [1] [2] 标注引用，前端据此渲染来源卡片。
+trace 是什么：本次回答的"黑匣子"——改写后的问题、两路检索的分数明细、
+把关判定、发给模型的完整提示词、各环节耗时。前端"🔍 链路"按钮展示它，
+方便回答不符合预期时定位问题出在哪一环（改写歪了？检索没命中？还是模型发挥？）。
 """
 
 import json
+import time
 from collections.abc import Generator
 
 from langchain_core.prompts import ChatPromptTemplate
 from sqlmodel import Session, select
 
+from app.config import settings
 from app.db import engine
 from app.models import ChatMessage, Document
 from app.services import retrieval
@@ -99,61 +105,10 @@ def _history_messages(session_id: str, limit: int = 8) -> list:
     ]
 
 
-def stream_answer(
-    session_id: str, question: str
-) -> Generator[dict, None, None]:
-    """流式问答主流程（生成器，逐条 yield 事件给 API 层转发）。
-
-    事件协议（SSE 推给前端）：
-      {"type": "sources", ...}   检索完成，先推来源列表
-      {"type": "token", ...}     每个 token 推一次
-      {"type": "done", ...}      回答结束，带上消息 id
-      {"type": "error", ...}     出错
-    """
-    try:
-        # ① 带着历史做检索（内部会先改写问题再混合检索）
-        # 注意键名是 input 而不是 question——langchain 1.x 的约定
-        retriever = retrieval.build_history_aware_retriever()
-        history = _history_messages(session_id)
-        docs = retriever.invoke({"input": question, "chat_history": history})
-        docs = _attach_doc_names(docs)
-
-        # ② 组装来源信息并推给前端
-        context, sources = _format_context(docs)
-        yield {"type": "sources", "sources": sources}
-
-        # ③ 知识库未命中：固定话术直接返回，不调大模型
-        #    （防止模型无视空材料、用自己的世界知识作答）
-        if not docs:
-            _save_turn(session_id, question, NO_HIT_ANSWER, sources)
-            yield {"type": "token", "content": NO_HIT_ANSWER}
-            yield {"type": "done", "answer": NO_HIT_ANSWER}
-            return
-
-        # ④ 组装提示词
-        prompt_value = ANSWER_PROMPT.invoke(
-            {"context": context, "question": question, "chat_history": history}
-        )
-
-        # ⑤ 流式生成。stream() 每次吐出一小段文本（chunk.content）
-        answer_parts: list[str] = []
-        for chunk in retrieval.chat_llm.stream(prompt_value.to_messages()):
-            if chunk.content:
-                answer_parts.append(chunk.content)
-                yield {"type": "token", "content": chunk.content}
-
-        answer = "".join(answer_parts)
-
-        # ⑥ 把这一问一答存进会话历史
-        _save_turn(session_id, question, answer, sources)
-
-        yield {"type": "done", "answer": answer}
-    except Exception as exc:  # noqa: BLE001
-        yield {"type": "error", "message": str(exc)[:500]}
-
-
-def _save_turn(session_id: str, question: str, answer: str, sources: list[dict]) -> None:
-    """把一轮问答（用户问题 + 助手回答）写入会话历史。"""
+def _save_turn(
+    session_id: str, question: str, answer: str, sources: list[dict], trace: dict | None
+) -> None:
+    """把一轮问答（用户问题 + 助手回答 + trace）写入会话历史。"""
     with Session(engine) as session:
         session.add(ChatMessage(session_id=session_id, role="user", content=question))
         session.add(
@@ -162,6 +117,85 @@ def _save_turn(session_id: str, question: str, answer: str, sources: list[dict])
                 role="assistant",
                 content=answer,
                 sources=json.dumps(sources, ensure_ascii=False) if sources else None,
+                trace=json.dumps(trace, ensure_ascii=False) if trace else None,
             )
         )
         session.commit()
+
+
+def stream_answer(session_id: str, question: str) -> Generator[dict, None, None]:
+    """流式问答主流程（生成器，逐条 yield 事件给 API 层转发）。
+
+    事件协议（SSE 推给前端）：
+      {"type": "sources", ...}   检索完成，先推来源列表
+      {"type": "token", ...}     每个 token 推一次
+      {"type": "done", ...}      回答结束，带上完整 trace（前端"链路"按钮用）
+      {"type": "error", ...}     出错
+    """
+    timings: dict[str, float | dict] = {}
+    try:
+        history = _history_messages(session_id)
+
+        # ① 改写（多轮指代消解）→ ② 检索 + 把关（全过程留痕在 retr_trace）
+        t0 = time.perf_counter()
+        rewritten = retrieval.rewrite_query(question, history)
+        timings["rewrite_ms"] = round((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        hybrid = retrieval.HybridRetriever(top_k=settings.top_k)
+        docs, retr_trace = hybrid.retrieve_with_trace(rewritten)
+        retr_trace["query_used"] = rewritten
+        timings["retrieve_ms"] = retr_trace["timings_ms"]
+
+        docs = _attach_doc_names(docs)
+
+        # ③ 组装来源信息并推给前端
+        context, sources = _format_context(docs)
+        yield {"type": "sources", "sources": sources}
+
+        # ④ 知识库未命中：固定话术直接返回，不调大模型
+        #    （防止模型无视空材料、用自己的世界知识作答）
+        if not docs:
+            trace = {
+                "question": question,
+                "rewritten_question": rewritten,
+                "retrieval": retr_trace,
+                "final_prompt": None,
+                "timings_ms": timings,
+            }
+            _save_turn(session_id, question, NO_HIT_ANSWER, sources, trace)
+            yield {"type": "token", "content": NO_HIT_ANSWER}
+            yield {"type": "done", "answer": NO_HIT_ANSWER, "trace": trace}
+            return
+
+        # ⑤ 组装提示词（把最终发给模型的完整内容存进 trace）
+        prompt_value = ANSWER_PROMPT.invoke(
+            {"context": context, "question": question, "chat_history": history}
+        )
+        prompt_text = "\n\n".join(
+            f"### role: {m.type}\n{m.content}" for m in prompt_value.to_messages()
+        )
+
+        # ⑥ 流式生成。stream() 每次吐出一小段文本（chunk.content）
+        t0 = time.perf_counter()
+        answer_parts: list[str] = []
+        for chunk in retrieval.chat_llm.stream(prompt_value.to_messages()):
+            if chunk.content:
+                answer_parts.append(chunk.content)
+                yield {"type": "token", "content": chunk.content}
+        answer = "".join(answer_parts)
+        timings["generate_ms"] = round((time.perf_counter() - t0) * 1000)
+
+        # ⑦ 存历史（含 trace）
+        trace = {
+            "question": question,
+            "rewritten_question": rewritten,
+            "retrieval": retr_trace,
+            "final_prompt": prompt_text,
+            "timings_ms": timings,
+        }
+        _save_turn(session_id, question, answer, sources, trace)
+
+        yield {"type": "done", "answer": answer, "trace": trace}
+    except Exception as exc:  # noqa: BLE001
+        yield {"type": "error", "message": str(exc)[:500]}

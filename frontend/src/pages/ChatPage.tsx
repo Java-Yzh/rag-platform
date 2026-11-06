@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { api, askStream, type ChatMessageInfo, type SessionInfo, type Source } from "../api";
+import {
+  api,
+  askStream,
+  type ChatMessageInfo,
+  type SessionInfo,
+  type Source,
+  type TraceHit,
+  type TraceInfo,
+} from "../api";
 
 /**
  * 对话页：左侧会话列表 + 右侧聊天窗口。
@@ -89,10 +97,14 @@ export default function ChatPage() {
     // 用户消息先上屏；助手占位为空
     setMessages((prev) => [...prev, { role: "user", content: question, sources: [] }]);
     setStreaming({ text: "", sources: [] });
+    // 记住本次回答的来源列表：done 事件里要用它组装正式消息
+    // （不存的话，流式临时气泡被替换成正式消息时来源就丢了）
+    let latestSources: Source[] = [];
 
     try {
       await askStream(activeId, question, (ev) => {
         if (ev.type === "sources") {
+          latestSources = ev.sources;
           setStreaming((s) => (s ? { ...s, sources: ev.sources } : s));
         } else if (ev.type === "token") {
           // 逐 token 拼接，React 自动重渲染 = 打字机效果
@@ -100,7 +112,8 @@ export default function ChatPage() {
         } else if (ev.type === "done") {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: ev.answer, sources: [] },
+            // trace 和 sources 都要在这一刻带上（sources 来自闭包变量）
+            { role: "assistant", content: ev.answer, sources: latestSources, trace: ev.trace },
           ]);
           setStreaming(null);
           refreshSessions(); // 标题可能被后端更新了
@@ -199,7 +212,13 @@ export default function ChatPage() {
             <div className="flex-1 overflow-y-auto px-6 py-4">
               <div className="mx-auto max-w-3xl space-y-4">
                 {messages.map((m, i) => (
-                  <MessageBubble key={i} role={m.role} content={m.content} sources={m.sources} />
+                  <MessageBubble
+                    key={i}
+                    role={m.role}
+                    content={m.content}
+                    sources={m.sources}
+                    trace={m.trace}
+                  />
                 ))}
                 {/* 正在生成的回答 */}
                 {streaming && (
@@ -219,7 +238,14 @@ export default function ChatPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  onKeyDown={(e) => {
+                    // 中文输入法"选字确认"也会触发一次 Enter，此时
+                    // isComposing 为 true（Safari 老版本用 keyCode 229 表达）。
+                    // 必须放行给输入法，否则拼音没选完消息就发出去了
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                      send();
+                    }
+                  }}
                   placeholder="基于文档提问…（回车发送）"
                   disabled={busy}
                   className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50"
@@ -294,6 +320,76 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** 链路面板的一路检索命中列表 */
+function TraceHits({ title, hits }: { title: string; hits: TraceHit[] }) {
+  return (
+    <div>
+      <div className="font-medium text-gray-700">{title}</div>
+      {hits.length === 0 ? (
+        <div className="mt-1 text-gray-400">无命中</div>
+      ) : (
+        <div className="mt-1 space-y-0.5">
+          {hits.map((h, i) => (
+            <div key={i} className="flex gap-2 rounded bg-white px-2 py-1">
+              <span className="w-12 shrink-0 text-right font-mono text-blue-600">{h.score}</span>
+              <span className="min-w-0 truncate">
+                {h.heading || "（无章节）"} · {h.excerpt}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 链路跟踪面板：展示本次回答从提问到生成的完整流水线（调优的"黑匣子"） */
+function TracePanel({ trace }: { trace: TraceInfo }) {
+  const r = trace.retrieval;
+  const t = (trace.timings_ms ?? {}) as Record<string, any>;
+  const changed = trace.rewritten_question !== trace.question;
+
+  return (
+    <div className="mt-2 space-y-2.5 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+      <div>
+        <div className="font-medium text-gray-700">① 问题改写{changed ? "" : "（无变化）"}</div>
+        <div className="mt-1 rounded bg-white px-2 py-1 font-mono">{trace.rewritten_question}</div>
+      </div>
+
+      <TraceHits title={`② 向量检索（${r.vector.length} 条）`} hits={r.vector} />
+      <TraceHits title={`③ BM25 检索（${r.bm25.length} 条）`} hits={r.bm25} />
+
+      <div>
+        <div className="font-medium text-gray-700">④ RRF 融合 + 相关性把关</div>
+        <div className="mt-1">
+          {r.gate.relevant === null
+            ? "把关未启用"
+            : r.gate.relevant
+              ? `✅ 判定相关，放行 ${r.fused.length} 条`
+              : `❌ 判定全部无关，来源清空（把关模型原话：${r.gate.raw}）`}
+        </div>
+      </div>
+
+      {trace.final_prompt && (
+        <details>
+          <summary className="cursor-pointer font-medium text-gray-700">
+            ⑤ 发给模型的完整提示词（{trace.final_prompt.length} 字，点开查看）
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-white p-2 font-mono text-[11px] leading-relaxed">
+            {trace.final_prompt}
+          </pre>
+        </details>
+      )}
+
+      <div className="text-gray-400">
+        耗时：改写 {String(t.rewrite_ms ?? "-")}ms · 向量 {String(r.timings_ms.vector_ms ?? "-")}ms ·
+        BM25 {String(r.timings_ms.bm25_ms ?? "-")}ms · 把关 {String(r.timings_ms.gate_ms ?? "-")}ms ·
+        生成 {String(t.generate_ms ?? "-")}ms
+      </div>
+    </div>
+  );
+}
+
 /** 单条消息气泡：用户靠右、助手靠左；助手消息下方渲染引用来源卡片 */
 function MessageBubble({
   role,
@@ -301,14 +397,17 @@ function MessageBubble({
   sources,
   streaming,
   elapsed = 0,
+  trace = null,
 }: {
   role: string;
   content: string;
   sources: Source[];
   streaming?: boolean;
   elapsed?: number;
+  trace?: TraceInfo | null;
 }) {
   const [showSources, setShowSources] = useState(true);
+  const [showTrace, setShowTrace] = useState(false);
   const isUser = role === "user";
   return (
     <div className={`group flex items-start gap-1.5 ${isUser ? "justify-end" : "justify-start"}`}>
@@ -330,12 +429,27 @@ function MessageBubble({
           {streaming && !content ? <WorkingStatus seconds={elapsed} /> : content}
           {streaming && !!content && <span className="ml-0.5 animate-pulse">▍</span>}
         </div>
-        {/* 助手消息全宽：复制按钮放气泡下方（生成中不显示） */}
+        {/* 助手消息全宽：操作条（复制 + 链路）放气泡下方（生成中不显示） */}
         {!isUser && !streaming && (
-          <div className="-mt-0.5">
+          <div className="-mt-0.5 flex items-center gap-1">
             <CopyButton text={content} />
+            {trace && (
+              <button
+                onClick={() => setShowTrace((v) => !v)}
+                title="查看本次回答的完整链路"
+                className={`rounded-md px-1.5 py-1 text-xs transition-opacity ${
+                  showTrace
+                    ? "font-medium text-blue-600 opacity-100"
+                    : "text-gray-400 opacity-0 hover:text-gray-600 group-hover:opacity-100"
+                }`}
+              >
+                🔍 链路
+              </button>
+            )}
           </div>
         )}
+        {/* 链路跟踪面板（点击 🔍 展开） */}
+        {showTrace && trace && <TracePanel trace={trace} />}
         {/* 引用来源卡片（仅助手消息且检索到了内容时显示） */}
         {!isUser && sources.length > 0 && (
           <div className="mt-2">

@@ -32,6 +32,23 @@ def init_db() -> None:
     import app.models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
+    _migrate()
+
+
+def _migrate() -> None:
+    """轻量迁移：给已存在的旧表补新列。
+
+    背景：SQLModel 的 create_all 只建新表，不会给旧表加列。
+    升级过代码的用户库里 chatmessage 表没有 trace 列，这里手工补上。
+    （列已存在时 ALTER 会报错，捕获后忽略即可——"幂等"迁移）
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE chatmessage ADD COLUMN trace TEXT"))
+        except Exception:  # noqa: BLE001 —— 列已存在
+            pass
 
 
 def get_session() -> Generator[Session, None, None]:

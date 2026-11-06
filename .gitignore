@@ -9,5 +9,7 @@ __pycache__/
 # 前端
 frontend/node_modules/
 frontend/dist/
+# IDE 个人配置（PyCharm/IDEA 等 JetBrains 系）
+.idea/
 # 系统
 .DS_Store

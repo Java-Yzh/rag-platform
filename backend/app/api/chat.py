@@ -104,6 +104,8 @@ def list_messages(session_id: str, session: Session = Depends(get_session)) -> l
             "role": m.role,
             "content": m.content,
             "sources": json.loads(m.sources) if m.sources else [],
+            # trace（链路数据）只存在于助手消息上；旧消息可能没有
+            "trace": json.loads(m.trace) if m.trace else None,
         }
         for m in rows
     ]
