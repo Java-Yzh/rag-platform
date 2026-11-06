@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import ChatPage from "./pages/ChatPage";
+import ChunkPage from "./pages/ChunkPage";
 import DocumentsPage from "./pages/DocumentsPage";
 
 /**
@@ -18,6 +19,7 @@ export default function App() {
           {[
             { to: "/chat", label: "💬 对话" },
             { to: "/docs", label: "📄 文档管理" },
+            { to: "/chunks", label: "🧩 Chunk 管理" },
           ].map(({ to, label }) => (
             <NavLink
               key={to}
@@ -39,6 +41,7 @@ export default function App() {
         <Routes>
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/docs" element={<DocumentsPage />} />
+          <Route path="/chunks" element={<ChunkPage />} />
           <Route path="*" element={<ChatPage />} />
         </Routes>
       </main>

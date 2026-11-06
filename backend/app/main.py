@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import chat, documents
+from app.api import chat, chunks, documents
 from app.config import settings
 from app.db import init_db
 
@@ -47,9 +47,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册两组 API 路由
+# 注册 API 路由
 app.include_router(documents.router)
 app.include_router(chat.router)
+app.include_router(chunks.router)
 
 
 @app.get("/api/health")
@@ -58,6 +59,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "chat_model": settings.chat_model,
+        "optimize_model": settings.optimize_model,
         "embed_model": settings.embed_model,
         "api_key_set": bool(settings.zhipuai_api_key),
     }

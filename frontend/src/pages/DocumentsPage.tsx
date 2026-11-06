@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ChunkInfo, type DocInfo } from "../api";
+import { useNavigate } from "react-router-dom";
+import { api, type DocInfo } from "../api";
 
 /**
- * 文档管理页：拖拽/点击上传 + 文档表格 + chunk 预览抽屉。
+ * 文档管理页：拖拽/点击上传 + 文档表格。
  *
  * 状态轮询知识点：Docling 转换一份文档要几十秒，后端是异步处理的，
  * 前端每 2 秒拉一次列表刷新状态徽章；全部处理完后停止轮询省资源。
+ *
+ * "查看 chunk"不再用抽屉（已并入 Chunk 管理页），改为跳转并带上
+ * 该文档的筛选参数——单一入口，少维护一套 UI。
  */
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [viewing, setViewing] = useState<DocInfo | null>(null); // chunk 抽屉对应的文档
   const fileInput = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     setDocs(await api.listDocuments());
@@ -50,7 +54,6 @@ export default function DocumentsPage() {
   const del = async (d: DocInfo) => {
     if (!confirm(`删除「${d.filename}」？向量与索引会一并清除`)) return;
     await api.deleteDocument(d.id);
-    if (viewing?.id === d.id) setViewing(null);
     refresh();
   };
 
@@ -132,7 +135,7 @@ export default function DocumentsPage() {
                 </td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-right">
                   <button
-                    onClick={() => setViewing(d)}
+                    onClick={() => navigate(`/chunks?doc=${d.id}`)}
                     disabled={d.status !== "done"}
                     className="text-blue-600 hover:underline disabled:text-gray-300"
                   >
@@ -154,9 +157,6 @@ export default function DocumentsPage() {
           </tbody>
         </table>
       </div>
-
-      {/* chunk 预览抽屉 */}
-      {viewing && <ChunkDrawer doc={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
@@ -180,79 +180,6 @@ function StatusBadge({ status, error }: { status: DocInfo["status"]; error: stri
       {status === "processing" && "⏳ "}
       {s.label}
     </span>
-  );
-}
-
-/** 侧滑抽屉：分页浏览某文档切出来的所有 chunk（调参的"眼睛"） */
-function ChunkDrawer({ doc, onClose }: { doc: DocInfo; onClose: () => void }) {
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<{
-    total: number;
-    page: number;
-    size: number;
-    chunks: ChunkInfo[];
-  } | null>(null);
-
-  useEffect(() => {
-    api.getChunks(doc.id, page, 10).then(setData);
-  }, [doc.id, page]);
-
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
-
-  return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={onClose}>
-      <div
-        className="flex h-full w-[520px] flex-col bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()} // 点抽屉内部不关闭
-      >
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{doc.filename}</h2>
-            <p className="text-xs text-gray-400">共 {data?.total ?? "…"} 块</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            ✕
-          </button>
-        </div>
-        <div className="flex-1 space-y-3 overflow-y-auto p-4">
-          {!data ? (
-            <p className="text-sm text-gray-400">加载中…</p>
-          ) : (
-            data.chunks.map((c) => (
-              <div key={c.seq} className="rounded-lg border border-gray-100 p-3 text-xs">
-                <div className="mb-1.5 flex items-center gap-2 text-gray-400">
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono">#{c.seq}</span>
-                  {c.heading_path && <span className="truncate">{c.heading_path}</span>}
-                  {c.page_no != null && (
-                    <span className="shrink-0">第{c.page_no}页</span>
-                  )}
-                </div>
-                <p className="whitespace-pre-wrap leading-relaxed text-gray-700">{c.content}</p>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3 text-sm">
-          <button
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-            className="text-gray-500 disabled:text-gray-300"
-          >
-            ← 上一页
-          </button>
-          <span className="text-xs text-gray-400">
-            {page} / {totalPages}
-          </span>
-          <button
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className="text-gray-500 disabled:text-gray-300"
-          >
-            下一页 →
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

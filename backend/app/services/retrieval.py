@@ -50,13 +50,14 @@ CONDENSE_PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-def _make_chat_llm(temperature: float) -> ChatOpenAI:
-    """创建一个指向智谱的对话模型客户端。
+def make_chat_llm(temperature: float, model: str | None = None) -> ChatOpenAI:
+    """创建一个指向智谱的对话模型客户端（工厂函数，各场景按需取用）。
 
-    问答用 temperature=0.1（要稳），改写/把关用 0（确定性任务）。
+    问答用 temperature=0.1（要稳），改写/把关/文本优化等确定性任务用 0~0.2。
+    model 不传时用默认对话模型；AI 优化等场景可传独立配置的模型。
     """
     return ChatOpenAI(
-        model=settings.chat_model,
+        model=model or settings.chat_model,
         api_key=settings.zhipuai_api_key,
         base_url=settings.zhipu_base_url,
         temperature=temperature,
@@ -65,7 +66,7 @@ def _make_chat_llm(temperature: float) -> ChatOpenAI:
 
 
 # 对话模型全局单例（流式生成回答用它）
-chat_llm: BaseChatModel = _make_chat_llm(temperature=0.1)
+chat_llm: BaseChatModel = make_chat_llm(temperature=0.1)
 
 
 def rewrite_query(question: str, history: list) -> str:
@@ -77,7 +78,7 @@ def rewrite_query(question: str, history: list) -> str:
     if not history:
         return question
     # temperature=0：改写是确定性任务，不需要创造性
-    llm = _make_chat_llm(temperature=0)
+    llm = make_chat_llm(temperature=0)
     messages = CONDENSE_PROMPT.invoke({"question": question, "chat_history": history})
     return llm.invoke(messages).content.strip()
 
@@ -125,7 +126,7 @@ def _grade_relevance(query: str, docs: list[LCDocument]) -> tuple[bool, str]:
         f"用户问题：{query}\n\n候选参考材料：\n{excerpts}\n\n"
         '这些材料能否为回答该问题提供有用信息？只回答"是"或"否"。'
     )
-    raw = _make_chat_llm(temperature=0).invoke(prompt).content.strip()
+    raw = make_chat_llm(temperature=0).invoke(prompt).content.strip()
     return raw.startswith("是"), raw
 
 

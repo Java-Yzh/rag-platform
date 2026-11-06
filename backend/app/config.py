@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # 指向这个地址（而不是 langchain-community 里已停止维护的智谱类）
     zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     chat_model: str = "glm-4-flash"           # 对话模型，flash 档免费且够用
+    # chunk AI 优化用的模型：独立配置，可以和对话模型不同（仍走智谱端点，
+    # 改写质量要求高时可以换成 glm-4-plus 等更强档位）
+    optimize_model: str = "glm-4-flash"
     embed_model: str = "embedding-3"          # 向量（Embedding）模型
     embed_dim: int = 2048                     # embedding-3 输出的向量维度
 

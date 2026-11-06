@@ -83,6 +83,17 @@ def delete_doc(doc_id: str) -> None:
         _vectorstore.delete(ids=hits["ids"])
 
 
+def replace_chunk_vector(doc_id: str, chunk: dict) -> None:
+    """重嵌入单个 chunk：删旧向量 → 用新文本重新 embedding 写入。
+
+    使用场景：手工修正了某个 chunk 的文本。此时旧向量还是旧文本的
+    语义，必须换掉，否则检索会"文不对向量"。id 仍是确定性的
+    doc_id:seq，所以先删后加正好完成原位替换。
+    """
+    _vectorstore.delete(ids=[f"{doc_id}:{chunk['seq']}"])
+    add_chunks(doc_id, [chunk])
+
+
 def count() -> int:
     """当前向量总数（诊断/验证用，比如删除后确认归零）。"""
     return _vectorstore._collection.count()

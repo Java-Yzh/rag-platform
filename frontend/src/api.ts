@@ -29,6 +29,14 @@ export interface ChunkInfo {
   content: string;
 }
 
+/** Chunk 管理页的一行（比文档抽屉版多带 id/所属文件/字符数） */
+export interface ChunkRowInfo extends ChunkInfo {
+  id: number;
+  doc_id: string;
+  doc_name: string;
+  chars: number;
+}
+
 export interface SessionInfo {
   id: string;
   title: string;
@@ -101,10 +109,31 @@ export const api = {
     fetch(`/api/documents/${id}/reingest`, { method: "POST" }).then((r) =>
       json<{ ok: boolean }>(r)
     ),
-  getChunks: (id: string, page: number, size: number) =>
-    fetch(`/api/documents/${id}/chunks?page=${page}&size=${size}`).then((r) =>
-      json<{ total: number; page: number; size: number; chunks: ChunkInfo[] }>(r)
-    ),
+
+  // Chunk 管理
+  listChunks: (params: { docId?: string; q?: string; page: number; size: number }) => {
+    const search = new URLSearchParams({
+      page: String(params.page),
+      size: String(params.size),
+    });
+    if (params.docId) search.set("doc_id", params.docId);
+    if (params.q) search.set("q", params.q);
+    return fetch(`/api/chunks?${search}`).then((r) =>
+      json<{ total: number; page: number; size: number; chunks: ChunkRowInfo[] }>(r)
+    );
+  },
+  editChunk: (id: number, content: string) =>
+    fetch(`/api/chunks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }).then((r) => json<{ ok: boolean }>(r)),
+  optimizeChunk: (content: string, headingPath: string) =>
+    fetch("/api/chunks/optimize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, heading_path: headingPath }),
+    }).then((r) => json<{ content: string }>(r)),
 
   // 会话
   listSessions: () => fetch("/api/chat/sessions").then((r) => json<SessionInfo[]>(r)),

@@ -14,11 +14,11 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import get_session
-from app.models import Chunk, Document
+from app.models import Document
 from app.services import ingestion
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -115,39 +115,3 @@ def reingest_document(doc_id: str, session: Session = Depends(get_session)) -> d
     session.commit()
     ingestion.submit_ingest(doc.id)
     return {"ok": True}
-
-
-@router.get("/{doc_id}/chunks")
-def list_chunks(
-    doc_id: str,
-    page: int = 1,   # 第几页（从 1 开始）
-    size: int = 10,  # 每页几条
-    session: Session = Depends(get_session),
-) -> dict:
-    """chunk 预览：分页展示某文档切出来的所有块（调优切分参数的"眼睛"）。"""
-    if session.get(Document, doc_id) is None:
-        raise HTTPException(404, "文档不存在")
-    total = session.exec(
-        select(func.count()).select_from(Chunk).where(Chunk.doc_id == doc_id)
-    ).one()
-    rows = session.exec(
-        select(Chunk)
-        .where(Chunk.doc_id == doc_id)
-        .order_by(Chunk.seq)
-        .offset((page - 1) * size)
-        .limit(size)
-    ).all()
-    return {
-        "total": total,
-        "page": page,
-        "size": size,
-        "chunks": [
-            {
-                "seq": r.seq,
-                "heading_path": r.heading_path,
-                "page_no": r.page_no,
-                "content": r.content,
-            }
-            for r in rows
-        ],
-    }
